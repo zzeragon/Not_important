@@ -60,8 +60,6 @@ section.panel { display: grid; gap: 18px }
 .status.ok { color: var(--ok) } .status.err { color: var(--block) }
 
 /* 이름 선택 */
-.groups { display: grid; gap: 12px }
-.group-label { font-size: .75rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px }
 .chips { display: flex; flex-wrap: wrap; gap: 8px }
 .chip { font: inherit; border: 1px solid var(--line); background: var(--surface); color: var(--fg); padding: 7px 14px; border-radius: 999px; cursor: pointer }
 .chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent) }
@@ -122,7 +120,7 @@ tr.mine td { background: color-mix(in srgb, var(--accent) 12%, transparent) }
 <div class="wrap">
   <header>
     <h1>연속실험 근무표</h1>
-    <p class="sub"><span class="mono">10/11(일) 11:00 → 10/19(월) 18:00</span> · 2인 1조 (A + B 또는 A + C) · 낮 09:00–18:00 / 밤 18:00–01:30 / 새벽 01:30–09:00</p>
+    <p class="sub"><span class="mono">10/11(일) 11:00 → 10/19(월) 18:00</span> · 2인 1조 · 낮 09:00–18:00 / 밤 18:00–01:30 / 새벽 01:30–09:00</p>
   </header>
   <nav role="tablist">
     <button role="tab" id="tab-survey" aria-selected="true" data-tab="survey">불가 시간 제출</button>
@@ -135,7 +133,7 @@ tr.mine td { background: color-mix(in srgb, var(--accent) 12%, transparent) }
     <div class="card">
       <h2>1. 이름을 선택하세요</h2>
       <p class="sub">이름 옆의 ✓ 표시는 이미 제출했다는 뜻입니다. 다시 들어와서 고칠 수 있어요.</p>
-      <div class="groups" id="names" style="margin-top:12px"></div>
+      <div class="chips" id="names" style="margin-top:12px"></div>
     </div>
     <div class="card" id="survey-form" hidden>
       <h2>2. <span id="who"></span> 님이 <u>근무할 수 없는</u> 시간대를 누르세요</h2>
@@ -182,6 +180,12 @@ tr.mine td { background: color-mix(in srgb, var(--accent) 12%, transparent) }
   <!-- 3. 관리 -->
   <section class="panel" id="p-admin" hidden>
     <div class="card">
+      <h2>그룹 설정</h2>
+      <p class="sub">그룹은 관리 화면에서만 보이고, 참가자 화면과 공개 근무표에는 표시되지 않습니다. 각 조는 A 1명 + B 또는 C 1명으로 짭니다.</p>
+      <div class="row" id="groups-edit" style="margin-top:10px"></div>
+      <div class="row" style="margin-top:10px"><button class="btn" id="save-groups">그룹 저장</button><span class="status" id="groups-status"></span></div>
+    </div>
+    <div class="card">
       <h2>제출 현황</h2>
       <div class="kpis" id="kpis" style="margin-top:10px"></div>
       <div class="tbl-wrap" style="margin-top:14px"><table class="matrix" id="matrix"></table></div>
@@ -214,29 +218,33 @@ tr.mine td { background: color-mix(in srgb, var(--accent) 12%, transparent) }
 </div>
 
 <script>
-const PEOPLE = [
-  ["p01","이동근","A"],["p02","이상호","A"],["p03","박진영","A"],["p04","김영상","A"],["p05","장형준","A"],
-  ["p06","뚜안앵","B"],["p07","린","B"],["p08","김소연","B"],["p09","박찬수","B"],
-  ["p10","김용국","C"],["p11","신우찬","C"],["p12","이민준","C"],["p13","앵덕","C"],
-].map(([id,name,g]) => ({id,name,g}));
+// 참가자 화면에는 그룹 정보를 두지 않는다. 그룹은 소유자만 읽는 admin/groups 문서에 있다.
+const pad = n => String(n).padStart(2,"0");
+const NAMES = ["김소연","김영상","김용국","린","뚜안앵","박진영","박찬수","신우찬","앵덕","이동근","이민준","이상호","장형준"];
+const PEOPLE = NAMES.map((name, i) => ({ id: "n" + pad(i + 1), name, g: "" }));
 const BY_ID = Object.fromEntries(PEOPLE.map(p => [p.id, p]));
-const GA = PEOPLE.filter(p => p.g === "A").map(p => p.id);
-const GP = PEOPLE.filter(p => p.g !== "A").map(p => p.id);
+let GA = [], GP = [];
+function applyGroups(map) {
+  for (const p of PEOPLE) p.g = ["A","B","C"].includes(map?.[p.id]) ? map[p.id] : "";
+  GA = PEOPLE.filter(p => p.g === "A").map(p => p.id);
+  GP = PEOPLE.filter(p => p.g === "B" || p.g === "C").map(p => p.id);
+}
+const byName = (x, y) => BY_ID[x].name.localeCompare(BY_ID[y].name, "ko");
 const WD = "일월화수목금토";
 
-// 근무조 목록: 실험 시작/종료에 맞춰 첫·마지막 조를 자른다 (로컬 시각 기준 계산)
+// 근무조 목록: 실험 시작/종료에 맞춰 첫·마지막 조를 자른다 (현지 시각을 UTC 값으로 계산)
 const START = Date.UTC(2026,9,11,11,0), END = Date.UTC(2026,9,19,18,0);
 const KINDS = [["새벽",1.5,9],["낮",9,18],["밤",18,25.5]];
 const SHIFTS = [];
 for (let d = 10; d <= 19; d++) for (const [k,s,e] of KINDS) {
   const base = Date.UTC(2026,9,d);
   const st = Math.max(base + s*3600e3, START), en = Math.min(base + e*3600e3, END);
-  if (st < en) SHIFTS.push({ id: "s" + String(SHIFTS.length+1).padStart(2,"0"), k, st, en, day: d, h: (en-st)/3600e3 });
+  if (st < en) SHIFTS.push({ id: "s" + pad(SHIFTS.length+1), k, st, en, day: d, h: (en-st)/3600e3 });
 }
 const N = SHIFTS.length;
 const DAYS = [...new Set(SHIFTS.map(s => s.day))];
-const pad = n => String(n).padStart(2,"0");
 const fmt = t => { const d = new Date(t); return `${d.getUTCMonth()+1}/${d.getUTCDate()}(${WD[d.getUTCDay()]}) ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`; };
+const hm = t => fmt(t).slice(-5);
 const dayLabel = d => `10/${d}(${WD[new Date(Date.UTC(2026,9,d)).getUTCDay()]})`;
 const shiftByDayKind = (d,k) => SHIFTS.find(s => s.day === d && s.k === k);
 const shiftLabel = s => `10/${s.day} ${s.k}`;
@@ -244,16 +252,17 @@ const shiftLabel = s => `10/${s.day} ${s.k}`;
 // ---------- 상태 ----------
 let db = null, user = null, isOwner = false, canWrite = null;
 let avail = {};           // pid -> {blocked:[sid], note, updatedAt}
-let published = null;     // schedule/current
-let draft = null;         // {rows:[{a,p,locked}], minRest, memo}
-let me = null;            // 설문에서 선택한 사람
-let picked = new Set();
-let dirtyDraft = false;
+let published = null;     // schedule/current : {rows:[{m:[pid,pid]}], memo, updatedAt}
+let savedDraft = null;    // admin/draft      : {rows:[{a,p,locked}], minRest, memo}
+let draft = null;
+let me = null, picked = new Set(), dirtyDraft = false;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const gtag = id => BY_ID[id]?.g ? `<span class="grp">${BY_ID[id].g}</span>` : "";
 
 // ---------- 탭 ----------
 function showTab(t) {
+  if (t === "admin" && !isOwner) t = "survey";
   for (const b of document.querySelectorAll("nav button")) b.setAttribute("aria-selected", String(b.dataset.tab === t));
   for (const k of ["survey","schedule","admin"]) $("p-"+k).hidden = k !== t;
   if (t === "admin") renderAdmin();
@@ -263,10 +272,7 @@ document.querySelector("nav").addEventListener("click", e => { const b = e.targe
 
 // ---------- 설문 ----------
 function renderNames() {
-  const html = ["A","B","C"].map(g => `<div><div class="group-label">${g}그룹</div><div class="chips">${
-    PEOPLE.filter(p => p.g === g).map(p => `<button class="chip" id="chip-${p.id}" data-pid="${p.id}" aria-pressed="${me === p.id}">${esc(p.name)}${avail[p.id] ? '<span class="done">✓ 제출</span>' : ""}</button>`).join("")
-  }</div></div>`).join("");
-  $("names").innerHTML = html;
+  $("names").innerHTML = PEOPLE.map(p => `<button class="chip" id="chip-${p.id}" data-pid="${p.id}" aria-pressed="${me === p.id}">${esc(p.name)}${avail[p.id] ? '<span class="done">✓ 제출</span>' : ""}</button>`).join("");
 }
 $("names").addEventListener("click", e => {
   const b = e.target.closest("[data-pid]"); if (!b) return;
@@ -282,14 +288,13 @@ $("names").addEventListener("click", e => {
   $("survey-form").scrollIntoView({ behavior: "smooth", block: "start" });
 });
 function renderGrid() {
-  let h = `<div class="hd"></div>` + KINDS.map(([k,s,e]) => `<div class="hd"><b>${k}</b><span class="mono">${k==="새벽"?"01:30–09:00":k==="낮"?"09:00–18:00":"18:00–01:30"}</span></div>`).join("") + `<div class="hd allday-col"></div>`;
+  let h = `<div class="hd"></div>` + KINDS.map(([k]) => `<div class="hd"><b>${k}</b><span class="mono">${k==="새벽"?"01:30–09:00":k==="낮"?"09:00–18:00":"18:00–01:30"}</span></div>`).join("") + `<div class="hd allday-col"></div>`;
   for (const d of DAYS) {
     h += `<div class="dlabel">${dayLabel(d)}</div>`;
     for (const [k] of KINDS) {
       const s = shiftByDayKind(d,k);
       if (!s) { h += `<div class="cell na"></div>`; continue; }
-      const on = picked.has(s.id);
-      const range = `${fmt(s.st).slice(-5)}–${fmt(s.en).slice(-5)}`;
+      const on = picked.has(s.id), range = `${hm(s.st)}–${hm(s.en)}`;
       h += `<button class="cell k-${k}" id="c-${s.id}" data-sid="${s.id}" aria-pressed="${on}" aria-label="${dayLabel(d)} ${k} ${range}">${on ? "불가" : (s.h < 7.5 ? range : "가능")}</button>`;
     }
     h += `<div class="allday-col dlabel"><button class="allday" data-day="${d}">하루 전체</button></div>`;
@@ -297,8 +302,7 @@ function renderGrid() {
   $("grid").innerHTML = h;
 }
 $("grid").addEventListener("click", e => {
-  const c = e.target.closest("[data-sid]");
-  const a = e.target.closest("[data-day]");
+  const c = e.target.closest("[data-sid]"), a = e.target.closest("[data-day]");
   if (c) { picked.has(c.dataset.sid) ? picked.delete(c.dataset.sid) : picked.add(c.dataset.sid); }
   else if (a) {
     const ids = SHIFTS.filter(s => s.day === +a.dataset.day).map(s => s.id);
@@ -307,9 +311,7 @@ $("grid").addEventListener("click", e => {
   } else return;
   renderGrid();
 });
-function availCode(pid, blocked) {
-  return `AVAIL:${pid}:${[...blocked].sort().map(s => +s.slice(1)).join(",")}`;
-}
+const availCode = (pid, blocked) => `AVAIL:${pid}:${[...blocked].sort().map(s => +s.slice(1)).join(",")}`;
 $("save").addEventListener("click", async () => {
   if (!me) return;
   const blocked = [...picked].sort();
@@ -320,13 +322,13 @@ $("save").addEventListener("click", async () => {
     $("fallback").hidden = false;
     $("fallback-code").textContent = `[${BY_ID[me].name}] ${human}${note ? " / 메모: " + note : ""}\n${availCode(me, blocked)}`;
   };
-  if (!db || canWrite === false) { st.textContent = "이 링크에서는 저장할 수 없습니다."; st.className = "status err"; showFallback(); return; }
+  if (!db || canWrite === false) { st.textContent = "이 링크에서는 바로 저장되지 않습니다."; st.className = "status err"; showFallback(); return; }
   $("save").disabled = true; st.textContent = "저장 중…"; st.className = "status";
   try {
     await db.doc("avail/" + me).set({ pid: me, blocked, note, updatedAt: new Date().toISOString() });
     st.textContent = `제출 완료 · ${blocked.length}개 시간대 불가`; st.className = "status ok";
-  } catch (err) {
-    st.textContent = "저장 권한이 없습니다. 아래 코드를 관리자에게 보내 주세요."; st.className = "status err";
+  } catch {
+    st.textContent = "이 링크에서는 바로 저장되지 않습니다. 아래 내용을 관리자에게 보내 주세요."; st.className = "status err";
     canWrite = false; showFallback();
   } finally { $("save").disabled = false; }
 });
@@ -336,36 +338,33 @@ $("copy").addEventListener("click", async () => {
   catch { const r = document.createRange(); r.selectNodeContents($("fallback-code")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); $("copy").textContent = "선택됨 · Ctrl+C"; }
 });
 
-// ---------- 근무표 보기 ----------
+// ---------- 공개 근무표 (그룹 표시 없음) ----------
 $("me-filter").innerHTML += PEOPLE.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
 $("me-filter").addEventListener("change", renderSchedule);
-function scheduleTable(rows, mine) {
-  if (!rows) return `<tr><td class="empty">관리자가 근무표를 공개하면 여기에 표시됩니다.</td></tr>`;
-  let h = `<thead><tr><th>날짜</th><th>조</th><th>시간</th><th>A그룹</th><th>B/C그룹</th></tr></thead><tbody>`;
-  let prev = null;
-  SHIFTS.forEach((s, i) => {
-    const r = rows[i] || {};
-    const a = BY_ID[r.a], p = BY_ID[r.p];
-    const cls = [s.day !== prev && i ? "day-sep" : "", mine && (r.a === mine || r.p === mine) ? "mine" : ""].join(" ");
-    h += `<tr class="${cls}"><td>${s.day !== prev ? dayLabel(s.day) : ""}</td><td><span class="tag k-${s.k}">${s.k}</span></td><td class="mono">${fmt(s.st).slice(-5)}–${fmt(s.en).slice(-5)}</td><td>${a ? esc(a.name) : "—"}</td><td>${p ? esc(p.name) + `<span class="grp">${p.g}</span>` : "—"}</td></tr>`;
-    prev = s.day;
-  });
-  return h + "</tbody>";
-}
 function renderSchedule() {
   const rows = published?.rows || null;
   $("sched-meta").textContent = rows ? `마지막 수정 ${new Date(published.updatedAt).toLocaleString("ko-KR")}` : "아직 공개된 근무표가 없습니다.";
   $("sched-memo").hidden = !published?.memo; $("sched-memo").textContent = published?.memo || "";
-  $("sched-table").innerHTML = scheduleTable(rows, $("me-filter").value);
+  if (!rows) { $("sched-table").innerHTML = `<tr><td class="empty">관리자가 근무표를 공개하면 여기에 표시됩니다.</td></tr>`; return; }
+  const mine = $("me-filter").value;
+  let h = `<thead><tr><th>날짜</th><th>조</th><th>시간</th><th>근무자</th><th></th></tr></thead><tbody>`, prev = null;
+  SHIFTS.forEach((s, i) => {
+    const m = (Array.isArray(rows[i]?.m) ? rows[i].m : []).filter(id => BY_ID[id]).sort(byName);
+    const cls = [s.day !== prev && i ? "day-sep" : "", mine && m.includes(mine) ? "mine" : ""].join(" ");
+    h += `<tr class="${cls}"><td>${s.day !== prev ? dayLabel(s.day) : ""}</td><td><span class="tag k-${s.k}">${s.k}</span></td><td class="mono">${hm(s.st)}–${hm(s.en)}</td><td>${m[0] ? esc(BY_ID[m[0]].name) : "—"}</td><td>${m[1] ? esc(BY_ID[m[1]].name) : "—"}</td></tr>`;
+    prev = s.day;
+  });
+  $("sched-table").innerHTML = h + "</tbody>";
 }
 
 // ---------- 배치 엔진 ----------
-function isBlocked(pid, i) { return (avail[pid]?.blocked || []).includes(SHIFTS[i].id); }
+const isBlocked = (pid, i) => (avail[pid]?.blocked || []).includes(SHIFTS[i].id);
 function analyze(rows, minRest) {
-  const issues = rows.map(() => []);
-  const per = {};
+  const issues = rows.map(() => []), per = {};
   for (const p of PEOPLE) per[p.id] = { n: 0, h: 0, 낮: 0, 밤: 0, 새벽: 0, idx: [] };
   rows.forEach((r, i) => {
+    if (r.a && BY_ID[r.a]?.g !== "A") issues[i].push(`${BY_ID[r.a].name}은(는) A그룹 아님`);
+    if (r.p && !["B","C"].includes(BY_ID[r.p]?.g)) issues[i].push(`${BY_ID[r.p].name}은(는) B/C그룹 아님`);
     for (const pid of [r.a, r.p]) {
       if (!pid) { issues[i].push("빈 자리"); continue; }
       const x = per[pid]; x.n++; x.h += SHIFTS[i].h; x[SHIFTS[i].k]++; x.idx.push(i);
@@ -410,12 +409,13 @@ function solve(rows, minRest) {
   const locked = rows.map(r => !!r.locked);
   const blockedA = SHIFTS.map(s => new Set(GA.filter(x => (avail[x]?.blocked || []).includes(s.id))));
   const blockedP = SHIFTS.map(s => new Set(GP.filter(x => (avail[x]?.blocked || []).includes(s.id))));
-  const order = GP.filter(x => BY_ID[x].g === "B").flatMap((b, i) => [b, GP.filter(x => BY_ID[x].g === "C")[i]]);
-  let a = rows.map((r, i) => locked[i] && r.a ? r.a : GA[i % GA.length]);
-  let p = rows.map((r, i) => locked[i] && r.p ? r.p : order[i % order.length]);
+  const B = GP.filter(x => BY_ID[x].g === "B"), C = GP.filter(x => BY_ID[x].g === "C");
+  const order = [];
+  for (let i = 0; i < Math.max(B.length, C.length); i++) { if (B[i]) order.push(B[i]); if (C[i]) order.push(C[i]); }
+  const a = rows.map((r, i) => locked[i] && r.a ? r.a : GA[i % GA.length]);
+  const p = rows.map((r, i) => locked[i] && r.p ? r.p : order[i % order.length]);
   const free = locked.map((l, i) => l ? -1 : i).filter(i => i >= 0);
   let cur = cost(a, p, minRest, blockedA, blockedP), best = [cur, a.slice(), p.slice()];
-  // 시드 고정 난수 (같은 입력이면 같은 결과)
   let seed = 2026; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
   const ITER = 120000;
   if (free.length) for (let it = 0; it < ITER; it++) {
@@ -432,17 +432,21 @@ function solve(rows, minRest) {
   return best[1].map((x, i) => ({ a: x, p: best[2][i], locked: locked[i] }));
 }
 
-// ---------- 관리 화면 ----------
+// ---------- 관리 화면 (소유자 전용) ----------
 function ensureDraft() {
   if (draft) return;
-  draft = published?.rows
-    ? { rows: published.rows.map(r => ({ ...r })), minRest: published.minRest ?? 16, memo: published.memo || "" }
+  draft = savedDraft?.rows?.length === N
+    ? { rows: savedDraft.rows.map(r => ({ a: r.a || "", p: r.p || "", locked: !!r.locked })), minRest: savedDraft.minRest ?? 16, memo: savedDraft.memo || "" }
     : { rows: SHIFTS.map(() => ({ a: "", p: "", locked: false })), minRest: 16, memo: "" };
   $("minrest").value = draft.minRest; $("memo").value = draft.memo;
+}
+function renderGroupsEdit() {
+  $("groups-edit").innerHTML = PEOPLE.map(p => `<label class="row" style="gap:4px">${esc(p.name)}<select id="g-${p.id}" data-pid="${p.id}">${["","A","B","C"].map(g => `<option value="${g}" ${p.g === g ? "selected" : ""}>${g || "—"}</option>`).join("")}</select></label>`).join("");
 }
 function renderAdmin() {
   if (!isOwner) return;
   ensureDraft();
+  renderGroupsEdit();
   const submitted = PEOPLE.filter(p => avail[p.id]).length;
   const totalBlocked = PEOPLE.reduce((n, p) => n + (avail[p.id]?.blocked.length || 0), 0);
   const { issues, per } = analyze(draft.rows, draft.minRest);
@@ -452,42 +456,46 @@ function renderAdmin() {
     <div class="kpi"><b class="mono">${totalBlocked}</b><span>불가 표시된 조 (합계)</span></div>
     <div class="kpi"><b class="mono" style="color:var(${nIssues ? "--block" : "--ok"})">${nIssues}</b><span>문제 있는 조 (현재 초안)</span></div>
     <div class="kpi"><b class="mono">${N}</b><span>전체 근무조</span></div>`;
-  // 매트릭스
+  const ordered = ["A","B","C",""].flatMap(g => PEOPLE.filter(p => p.g === g));
   let m = `<thead><tr><th class="n">이름</th>` + SHIFTS.map(s => `<th title="${fmt(s.st)}"><span class="tag k-${s.k}" style="padding:1px 4px">${s.k[0]}</span><br><span class="mono">${s.day}</span></th>`).join("") + `</tr></thead><tbody>`;
-  for (const p of PEOPLE) {
+  for (const p of ordered) {
     const a = avail[p.id];
-    m += `<tr><td class="n" title="${esc(a?.note || "")}">${esc(p.name)} <span class="grp">${p.g}</span>${a ? (a.note ? " 💬" : "") : ' <span class="grp" style="color:var(--warn)">미제출</span>'}</td>` +
+    m += `<tr><td class="n" title="${esc(a?.note || "")}">${esc(p.name)} ${gtag(p.id)}${a ? (a.note ? " 💬" : "") : ' <span class="grp" style="color:var(--warn)">미제출</span>'}</td>` +
       SHIFTS.map((s, i) => {
-        const on = draft.rows[i].a === p.id || draft.rows[i].p === p.id;
-        const b = a?.blocked.includes(s.id);
+        const on = draft.rows[i].a === p.id || draft.rows[i].p === p.id, b = a?.blocked.includes(s.id);
         return `<td>${b ? `<span class="mx b">${on ? "!" : "✕"}</span>` : on ? `<span class="mx on">●</span>` : ""}</td>`;
       }).join("") + `</tr>`;
   }
   $("matrix").innerHTML = m + "</tbody>";
-  // 편집 표
   const opt = (ids, v) => `<option value="">—</option>` + ids.map(id => `<option value="${id}" ${id === v ? "selected" : ""}>${esc(BY_ID[id].name)}${BY_ID[id].g !== "A" ? " (" + BY_ID[id].g + ")" : ""}</option>`).join("");
-  let e = `<thead><tr><th>날짜</th><th>조</th><th>A그룹</th><th>B/C그룹</th><th>고정</th><th>확인</th></tr></thead><tbody>`;
-  let prev = null;
+  let e = `<thead><tr><th>날짜</th><th>조</th><th>A그룹</th><th>B/C그룹</th><th>고정</th><th>확인</th></tr></thead><tbody>`, prev = null;
   SHIFTS.forEach((s, i) => {
     const r = draft.rows[i];
-    e += `<tr class="${s.day !== prev && i ? "day-sep" : ""}"><td>${s.day !== prev ? dayLabel(s.day) : ""}</td><td><span class="tag k-${s.k}">${s.k}</span> <span class="mono grp">${fmt(s.st).slice(-5)}</span></td>
+    e += `<tr class="${s.day !== prev && i ? "day-sep" : ""}"><td>${s.day !== prev ? dayLabel(s.day) : ""}</td><td><span class="tag k-${s.k}">${s.k}</span> <span class="mono grp">${hm(s.st)}</span></td>
       <td><select id="ea-${i}" data-i="${i}" data-f="a">${opt(GA, r.a)}</select></td>
       <td><select id="ep-${i}" data-i="${i}" data-f="p">${opt(GP, r.p)}</select></td>
       <td><input type="checkbox" class="lock" id="el-${i}" data-i="${i}" data-f="locked" ${r.locked ? "checked" : ""} aria-label="고정"></td>
-      <td class="issue ${issues[i].length ? "" : "ok"}">${issues[i].length ? esc(issues[i].join(" · ")) : (r.a && r.p ? "OK" : "")}</td></tr>`;
+      <td class="issue ${issues[i].length ? "" : "ok"}">${issues[i].length ? esc(issues[i].join(" · ")) : "OK"}</td></tr>`;
     prev = s.day;
   });
   $("edit").innerHTML = e + "</tbody>";
-  // 요약
   let su = `<thead><tr><th>이름</th><th>그룹</th><th>횟수</th><th>시간</th><th>낮</th><th>밤</th><th>새벽</th><th>근무</th></tr></thead><tbody>`;
-  for (const p of PEOPLE) {
+  for (const p of ordered) {
     const x = per[p.id];
-    su += `<tr><td>${esc(p.name)}</td><td>${p.g}</td><td class="mono">${x.n}</td><td class="mono">${x.h}</td><td class="mono">${x.낮}</td><td class="mono">${x.밤}</td><td class="mono">${x.새벽}</td><td style="white-space:normal">${x.idx.map(i => shiftLabel(SHIFTS[i])).join(", ")}</td></tr>`;
+    su += `<tr><td>${esc(p.name)}</td><td>${p.g || "—"}</td><td class="mono">${x.n}</td><td class="mono">${x.h}</td><td class="mono">${x.낮}</td><td class="mono">${x.밤}</td><td class="mono">${x.새벽}</td><td style="white-space:normal">${x.idx.map(i => shiftLabel(SHIFTS[i])).join(", ")}</td></tr>`;
   }
   $("summary").innerHTML = su + "</tbody>";
-  $("admin-status").textContent = dirtyDraft ? "저장하지 않은 변경 있음" : (published ? "공개된 근무표와 같음" : "아직 공개 전");
-  $("admin-status").className = "status" + (dirtyDraft ? " err" : "");
+  const groupsOk = GA.length && GP.some(x => BY_ID[x].g === "B") && GP.some(x => BY_ID[x].g === "C");
+  $("auto").disabled = !groupsOk;
+  $("admin-status").textContent = !groupsOk ? "그룹 설정을 먼저 저장하세요" : dirtyDraft ? "저장하지 않은 변경 있음" : (published ? "공개된 근무표와 같음" : "아직 공개 전");
+  $("admin-status").className = "status" + (dirtyDraft || !groupsOk ? " err" : "");
 }
+$("save-groups").addEventListener("click", async () => {
+  const map = {};
+  for (const sel of document.querySelectorAll("#groups-edit select")) if (sel.value) map[sel.dataset.pid] = sel.value;
+  try { await db.doc("admin/groups").set({ map, updatedAt: new Date().toISOString() }); $("groups-status").textContent = "저장됨"; $("groups-status").className = "status ok"; }
+  catch (err) { $("groups-status").textContent = "저장 실패: " + (err?.message || ""); $("groups-status").className = "status err"; }
+});
 $("edit").addEventListener("change", e => {
   const t = e.target; if (!t.dataset.f) return;
   const r = draft.rows[+t.dataset.i];
@@ -504,18 +512,20 @@ $("auto").addEventListener("click", () => {
 $("publish").addEventListener("click", async () => {
   if (!db) return;
   $("publish").disabled = true;
+  const now = new Date().toISOString(), memo = draft.memo.trim();
   try {
-    await db.doc("schedule/current").set({ rows: draft.rows, minRest: draft.minRest, memo: draft.memo.trim(), updatedAt: new Date().toISOString() });
+    await db.doc("admin/draft").set({ rows: draft.rows, minRest: draft.minRest, memo, updatedAt: now });
+    await db.doc("schedule/current").set({ rows: draft.rows.map(r => ({ m: [r.a, r.p].filter(Boolean).sort(byName) })), memo, updatedAt: now });
     dirtyDraft = false; $("admin-status").textContent = "저장 · 공개됨"; $("admin-status").className = "status ok";
   } catch (err) { $("admin-status").textContent = "저장 실패: " + (err?.message || err?.code || ""); $("admin-status").className = "status err"; }
   finally { $("publish").disabled = false; }
 });
 $("import").addEventListener("click", async () => {
-  const lines = $("import-text").value.match(/AVAIL:p\d{2}:[\d,]*/g) || [];
+  const codes = $("import-text").value.match(/AVAIL:n\d{2}:[\d,]*/g) || [];
   const st = $("import-status");
-  if (!lines.length) { st.textContent = "AVAIL: 코드를 찾지 못했습니다."; st.className = "status err"; return; }
+  if (!codes.length) { st.textContent = "AVAIL: 코드를 찾지 못했습니다."; st.className = "status err"; return; }
   let ok = 0;
-  for (const l of lines) {
+  for (const l of codes) {
     const [, pid, list] = l.split(":");
     if (!BY_ID[pid]) continue;
     const blocked = list.split(",").filter(Boolean).map(n => "s" + pad(+n)).filter(id => SHIFTS.some(s => s.id === id));
@@ -528,30 +538,34 @@ $("import").addEventListener("click", async () => {
 renderNames(); renderSchedule();
 (async () => {
   const c = window.claude;
-  if (!c?.use) { $("save-status").textContent = "저장 기능을 불러올 수 없습니다."; return; }
+  if (!c?.use) return;
   [db, user] = await Promise.all([c.use("db"), c.use("user")]);
   if (user) {
     isOwner = await user.isOwner().catch(() => false);
     canWrite = await user.can("data.write").catch(() => null);
   }
-  if (isOwner) {
-    $("tab-admin").hidden = false;
-    if (location.hash === "#admin") showTab("admin");
-  }
-  if (location.hash === "#schedule") showTab("schedule");
+  if (isOwner) $("tab-admin").hidden = false;
+  if (location.hash === "#admin") showTab("admin");
+  else if (location.hash === "#schedule") showTab("schedule");
   if (!db) return;
+  const rerenderAdmin = () => { if (!$("p-admin").hidden) renderAdmin(); };
   db.collection("avail").onSnapshot(snap => {
     avail = {};
     for (const d of snap.docs) { const v = d.data(); if (v && BY_ID[d.id]) avail[d.id] = { blocked: Array.isArray(v.blocked) ? v.blocked : [], note: String(v.note || ""), updatedAt: v.updatedAt }; }
-    renderNames();
-    if (!$("p-admin").hidden) renderAdmin();
+    renderNames(); rerenderAdmin();
   });
   db.doc("schedule/current").onSnapshot(snap => {
     published = snap.exists ? snap.data() : null;
     if (published && !Array.isArray(published.rows)) published = null;
-    if (!dirtyDraft && published) { draft = null; }
-    renderSchedule();
-    if (!$("p-admin").hidden) renderAdmin();
+    renderSchedule(); rerenderAdmin();
   });
+  if (isOwner) {
+    db.doc("admin/groups").onSnapshot(snap => { applyGroups(snap.exists ? snap.data()?.map : null); rerenderAdmin(); });
+    db.doc("admin/draft").onSnapshot(snap => {
+      savedDraft = snap.exists ? snap.data() : null;
+      if (!dirtyDraft) draft = null;
+      rerenderAdmin();
+    });
+  }
 })();
 </script>
