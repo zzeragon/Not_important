@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>연속실험 불가 시간 조사</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@500&display=swap">
+/*STYLE*/
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>연속실험 불가 시간 조사</h1>
+    <p class="sub"><span class="mono">10/11(일) 11:00 → 10/19(월) 18:00</span> · 2인 1조 · 낮 09:00–18:00 / 밤 18:00–01:30 / 새벽 01:30–09:00</p>
+  </header>
+  <section class="panel" style="margin-top:16px">
+    <div class="card">
+      <h2>1. 이름을 선택하세요</h2>
+      <div class="chips" id="names" style="margin-top:12px"></div>
+    </div>
+    <div class="card" id="survey-form" hidden>
+      <h2>2. <span id="who"></span> 님이 <u>근무할 수 없는</u> 시간대를 누르세요</h2>
+      <p class="sub">빗금이 쳐진 칸이 불가입니다. 아무것도 누르지 않으면 모든 시간 가능으로 제출됩니다.</p>
+      <div class="legend" style="margin:10px 0 14px">
+        <span><i class="sw" style="background:var(--dawn)"></i>새벽 01:30–09:00</span>
+        <span><i class="sw" style="background:var(--day)"></i>낮 09:00–18:00</span>
+        <span><i class="sw" style="background:var(--eve)"></i>밤 18:00–익일 01:30</span>
+      </div>
+      <div class="grid" id="grid"></div>
+      <div style="margin-top:14px">
+        <label for="note"><h3>메모 (선택)</h3></label>
+        <textarea id="note" placeholder="예) 10/15 낮은 14시 이후면 가능"></textarea>
+      </div>
+    </div>
+    <div class="card" id="out-card" hidden>
+      <h2>3. 결과를 관리자에게 보내세요</h2>
+      <p class="sub">아래 내용을 복사해서 카톡·메일로 보내거나, 파일로 저장해서 첨부하세요. 둘 중 하나만 하면 됩니다.</p>
+      <div class="code" id="out" style="margin-top:10px;white-space:pre-wrap"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn primary" id="copy">복사하기</button>
+        <button class="btn" id="download">파일로 저장</button>
+        <span class="status" id="out-status"></span>
+      </div>
+    </div>
+  </section>
+</div>
+<script>
+/*COMMON*/
+let me = null, picked = new Set();
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const b64 = s => btoa(unescape(encodeURIComponent(s)));
+
+function renderNames() {
+  $("names").innerHTML = PEOPLE.map(p => `<button class="chip" data-pid="${p.id}" aria-pressed="${me === p.id}">${esc(p.name)}</button>`).join("");
+}
+function renderGrid() {
+  let h = `<div class="hd"></div>` + KINDS.map(([k]) => `<div class="hd"><b>${k}</b><span class="mono">${k==="새벽"?"01:30–09:00":k==="낮"?"09:00–18:00":"18:00–01:30"}</span></div>`).join("") + `<div class="hd allday-col"></div>`;
+  for (const d of DAYS) {
+    h += `<div class="dlabel">${dayLabel(d)}</div>`;
+    for (const [k] of KINDS) {
+      const s = shiftByDayKind(d,k);
+      if (!s) { h += `<div class="cell na"></div>`; continue; }
+      const on = picked.has(s.id), range = `${hm(s.st)}–${hm(s.en)}`;
+      h += `<button class="cell k-${k}" data-sid="${s.id}" aria-pressed="${on}" aria-label="${dayLabel(d)} ${k} ${range}">${on ? "불가" : (s.h < 7.5 ? range : "가능")}</button>`;
+    }
+    h += `<div class="allday-col dlabel"><button class="allday" data-day="${d}">하루 전체</button></div>`;
+  }
+  $("grid").innerHTML = h;
+}
+function resultText() {
+  const blocked = [...picked].sort();
+  const note = $("note").value.trim().slice(0, 500);
+  const human = blocked.length ? blocked.map(id => shiftLabel(SHIFTS.find(s => s.id === id))).join(", ") : "불가 시간 없음";
+  return `[연속실험 불가 시간] ${BY_ID[me].name}\n불가: ${human}${note ? "\n메모: " + note : ""}\nAVAIL:${me}:${blocked.map(s => +s.slice(1)).join(",")}:${note ? b64(note) : ""}`;
+}
+function renderOut() { $("out").textContent = resultText(); $("out-status").textContent = ""; }
+
+$("names").addEventListener("click", e => {
+  const b = e.target.closest("[data-pid]"); if (!b) return;
+  me = b.dataset.pid; picked = new Set(); $("note").value = "";
+  $("who").textContent = BY_ID[me].name;
+  $("survey-form").hidden = false; $("out-card").hidden = false;
+  renderNames(); renderGrid(); renderOut();
+});
+$("grid").addEventListener("click", e => {
+  const c = e.target.closest("[data-sid]"), a = e.target.closest("[data-day]");
+  if (c) { picked.has(c.dataset.sid) ? picked.delete(c.dataset.sid) : picked.add(c.dataset.sid); }
+  else if (a) {
+    const ids = SHIFTS.filter(s => s.day === +a.dataset.day).map(s => s.id);
+    const all = ids.every(i => picked.has(i));
+    ids.forEach(i => all ? picked.delete(i) : picked.add(i));
+  } else return;
+  renderGrid(); renderOut();
+});
+$("note").addEventListener("input", renderOut);
+$("copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(resultText()); $("out-status").textContent = "복사됨 · 관리자에게 붙여넣어 보내세요"; $("out-status").className = "status ok"; }
+  catch { const r = document.createRange(); r.selectNodeContents($("out")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); $("out-status").textContent = "선택됨 · 길게 눌러 복사하세요"; }
+});
+$("download").addEventListener("click", () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([resultText()], { type: "text/plain;charset=utf-8" }));
+  a.download = `불가시간_${BY_ID[me].name}.txt`;
+  document.body.appendChild(a); a.click(); a.remove();
+  $("out-status").textContent = "저장됨 · 이 파일을 관리자에게 보내세요"; $("out-status").className = "status ok";
+});
+renderNames();
+</script>
+</body>
+</html>

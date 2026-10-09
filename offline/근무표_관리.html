@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>연속실험 근무표 관리</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: 상단 고정 탭 + 한 열짜리 작업면. 근무조(낮/밤/새벽)는 색으로, 상태(불가/충돌/고정)는 형태로 구분 */
+:root {
+  --bg: #f3f5f4;
+  --surface: #ffffff;
+  --fg: #17201d;
+  --muted: #5c6a65;
+  --line: #d6ddda;
+  --accent: #0e6b5c;
+  --accent-fg: #ffffff;
+  --day: #f2c14e;
+  --day-soft: #fbf0d2;
+  --eve: #5b5fc7;
+  --eve-soft: #e3e4f7;
+  --dawn: #3d8eb9;
+  --dawn-soft: #dcecf5;
+  --block: #c2413a;
+  --block-soft: #f7dedc;
+  --warn: #b26a00;
+  --ok: #2a7d4f;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111816; --surface: #19221f; --fg: #e4ebe8; --muted: #93a39d; --line: #2c3833;
+  --accent: #3fb59f; --accent-fg: #0b1513;
+  --day: #e0b043; --day-soft: #3a3220; --eve: #8d91ee; --eve-soft: #2a2b47; --dawn: #6cb3da; --dawn-soft: #1d3340;
+  --block: #ec6d64; --block-soft: #44221f; --warn: #e2a243; --ok: #5cc68b; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111816; --surface: #19221f; --fg: #e4ebe8; --muted: #93a39d; --line: #2c3833;
+  --accent: #3fb59f; --accent-fg: #0b1513;
+  --day: #e0b043; --day-soft: #3a3220; --eve: #8d91ee; --eve-soft: #2a2b47; --dawn: #6cb3da; --dawn-soft: #1d3340;
+  --block: #ec6d64; --block-soft: #44221f; --warn: #e2a243; --ok: #5cc68b; color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; padding: 0 16px 48px }
+.wrap { max-width: 980px; margin: 0 auto }
+header { padding-block: 22px 8px }
+h1 { font-size: 1.45rem; margin: 0; text-wrap: balance; letter-spacing: -0.01em }
+h2 { font-size: 1.1rem; margin: 0 0 4px }
+h3 { font-size: .95rem; margin: 0 0 6px }
+.sub { color: var(--muted); margin: 2px 0 0; font-size: .9rem }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums }
+nav { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 18px; padding-top: 6px; overflow-x: auto }
+nav button { border: 0; background: none; color: var(--muted); font: inherit; font-weight: 500; padding: 10px 14px; border-bottom: 3px solid transparent; cursor: pointer; white-space: nowrap }
+nav button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent) }
+section.panel { display: grid; gap: 18px }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: .85rem; color: var(--muted) }
+.sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px }
+.btn { font: inherit; font-weight: 500; border-radius: 8px; padding: 9px 16px; cursor: pointer; border: 1px solid var(--line); background: var(--surface); color: var(--fg) }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent) }
+.btn:disabled { opacity: .5; cursor: default }
+.btn:focus-visible, nav button:focus-visible, .cell:focus-visible, .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center }
+.status { font-size: .88rem; color: var(--muted) }
+.status.ok { color: var(--ok) } .status.err { color: var(--block) }
+
+/* 이름 선택 */
+.chips { display: flex; flex-wrap: wrap; gap: 8px }
+.chip { font: inherit; border: 1px solid var(--line); background: var(--surface); color: var(--fg); padding: 7px 14px; border-radius: 999px; cursor: pointer }
+.chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent) }
+.chip .done { font-size: .72rem; margin-left: 6px; color: var(--ok) }
+.chip[aria-pressed="true"] .done { color: inherit }
+
+/* 불가 시간 그리드 */
+.grid { display: grid; grid-template-columns: minmax(84px, 110px) repeat(3, minmax(0, 1fr)) auto; gap: 6px; align-items: stretch }
+.grid .hd { font-size: .8rem; color: var(--muted); padding: 2px 4px }
+.grid .hd b { display: block; color: var(--fg); font-size: .88rem }
+.dlabel { display: flex; align-items: center; font-weight: 500; font-size: .92rem }
+.cell { font: inherit; border-radius: 8px; border: 1px solid var(--line); padding: 10px 6px; cursor: pointer; text-align: center; min-height: 46px; background: var(--surface); color: var(--fg); font-size: .85rem }
+.cell.k-낮 { box-shadow: inset 0 3px 0 var(--day) }
+.cell.k-밤 { box-shadow: inset 0 3px 0 var(--eve) }
+.cell.k-새벽 { box-shadow: inset 0 3px 0 var(--dawn) }
+.cell[aria-pressed="true"] { background: repeating-linear-gradient(135deg, var(--block-soft) 0 6px, var(--surface) 6px 12px); border-color: var(--block); color: var(--block); font-weight: 700 }
+.cell.na { visibility: hidden }
+.allday { font: inherit; font-size: .78rem; border: 0; background: none; color: var(--muted); cursor: pointer; text-decoration: underline; padding: 0 4px }
+textarea, input[type="number"], select { font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px }
+textarea { width: 100%; min-height: 70px; resize: vertical }
+.code { font-family: var(--font-mono); font-size: .8rem; background: var(--bg); border: 1px dashed var(--line); border-radius: 8px; padding: 10px; word-break: break-all; user-select: all }
+
+/* 근무표 */
+.tbl-wrap { overflow-x: auto }
+table { border-collapse: collapse; width: 100%; font-size: .9rem }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap }
+th { font-size: .78rem; color: var(--muted); font-weight: 500 }
+tr.day-sep td { border-top: 2px solid var(--line) }
+.tag { display: inline-block; font-size: .78rem; font-weight: 700; padding: 2px 8px; border-radius: 999px }
+.tag.k-낮 { background: var(--day-soft); color: var(--fg) } .tag.k-밤 { background: var(--eve-soft); color: var(--fg) } .tag.k-새벽 { background: var(--dawn-soft); color: var(--fg) }
+.grp { font-size: .72rem; color: var(--muted); margin-left: 4px }
+tr.mine td { background: color-mix(in srgb, var(--accent) 12%, transparent) }
+.empty { color: var(--muted); padding: 24px 8px; text-align: center }
+
+/* 관리 */
+.matrix td, .matrix th { padding: 4px; text-align: center; font-size: .78rem }
+.matrix td.n, .matrix th.n { text-align: left; padding-right: 10px }
+.mx { display: inline-block; width: 18px; height: 18px; border-radius: 4px; line-height: 18px; font-weight: 700 }
+.mx.b { background: var(--block-soft); color: var(--block) }
+.mx.on { background: var(--accent); color: var(--accent-fg) }
+.issue { color: var(--block); font-size: .8rem; white-space: normal; min-width: 160px }
+.issue.ok { color: var(--ok) }
+.edit select { padding: 5px 6px; max-width: 120px }
+.lock { cursor: pointer }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px }
+.kpi { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px }
+.kpi b { display: block; font-size: 1.3rem }
+.kpi span { font-size: .8rem; color: var(--muted) }
+.notice { border-left: 3px solid var(--warn); padding: 8px 12px; background: var(--surface); font-size: .88rem }
+@media (max-width: 560px) {
+  .grid { grid-template-columns: 64px repeat(3, minmax(0, 1fr)); }
+  .grid .allday-col { display: none }
+  .cell { padding: 8px 2px; font-size: .78rem }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important } }
+</style>
+<style>
+.drop { border: 2px dashed var(--line); border-radius: 10px; padding: 14px; text-align: center; color: var(--muted) }
+.drop.over { border-color: var(--accent); color: var(--fg) }
+.x { font: inherit; border: 0; background: none; color: var(--block); cursor: pointer; padding: 0 4px }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>연속실험 근무표 관리</h1>
+    <p class="sub"><span class="mono">10/11(일) 11:00 → 10/19(월) 18:00</span> · 관리자 전용 파일입니다. 그룹 정보가 들어 있으니 참가자에게 보내지 마세요. 작업 내용은 이 브라우저에 자동 저장됩니다.</p>
+  </header>
+  <section class="panel" style="margin-top:16px">
+    <div class="card">
+      <h2>1. 받은 제출 넣기</h2>
+      <p class="sub">참가자가 보낸 메시지를 통째로 붙여 넣거나(여러 명 한꺼번에 가능), 받은 .txt 파일을 끌어다 놓으세요. 같은 사람이 다시 보내면 최신 것으로 바뀝니다.</p>
+      <textarea id="import-text" style="margin-top:10px" placeholder="[연속실험 불가 시간] 홍길동&#10;불가: ...&#10;AVAIL:n01:3,4:"></textarea>
+      <div class="drop" id="drop" style="margin-top:8px">.txt 파일을 여기에 끌어다 놓기 · <label style="text-decoration:underline;cursor:pointer">파일 선택<input type="file" id="file" accept=".txt,text/plain" multiple hidden></label></div>
+      <div class="row" style="margin-top:8px"><button class="btn primary" id="import">가져오기</button><span class="status" id="import-status"></span></div>
+    </div>
+    <div class="card">
+      <h2>2. 제출 현황</h2>
+      <div class="kpis" id="kpis" style="margin-top:10px"></div>
+      <div class="tbl-wrap" style="margin-top:14px"><table class="matrix" id="matrix"></table></div>
+      <p class="sub" style="margin-top:6px">✕ 불가 · ● 배치됨 · ! 불가인데 배치됨. 이름에 마우스를 올리면 메모가 보이고, ✕ 버튼으로 그 사람 제출을 지울 수 있습니다.</p>
+    </div>
+    <div class="card">
+      <h2>3. 근무 배치</h2>
+      <p class="sub">자동 배치는 불가 시간과 최소 휴식을 지키고 근무 횟수·시간·새벽/밤 횟수를 고르게 나눕니다. 🔒 고정한 조는 그대로 둡니다. 칸을 직접 바꿔도 됩니다.</p>
+      <div class="row" style="margin:12px 0">
+        <label class="row" style="gap:6px">최소 휴식 <input type="number" id="minrest" min="0" max="48" step="1" style="width:70px"> 시간</label>
+        <button class="btn primary" id="auto">자동 배치</button>
+        <span class="status" id="admin-status"></span>
+      </div>
+      <div class="tbl-wrap"><table class="edit" id="edit"></table></div>
+    </div>
+    <div class="card">
+      <h2>4. 개인별 요약</h2>
+      <div class="tbl-wrap"><table id="summary"></table></div>
+    </div>
+    <div class="card">
+      <h2>5. 내보내기</h2>
+      <p class="sub">공유용 근무표에는 그룹이 표시되지 않습니다.</p>
+      <div class="row" style="margin-top:10px">
+        <button class="btn primary" id="copy-share">공유용 근무표 복사 (카톡용)</button>
+        <button class="btn" id="csv">엑셀(CSV) 저장</button>
+        <button class="btn" id="backup">백업 파일 저장</button>
+        <label class="btn">백업 불러오기<input type="file" id="restore" accept=".json" hidden></label>
+        <span class="status" id="export-status"></span>
+      </div>
+      <div class="code" id="share" style="margin-top:10px;white-space:pre-wrap" hidden></div>
+    </div>
+    <div class="card">
+      <h2>그룹 설정</h2>
+      <div class="row" id="groups-edit" style="margin-top:6px"></div>
+    </div>
+  </section>
+</div>
+<script>
+const pad = n => String(n).padStart(2,"0");
+const NAMES = ["김소연","김영상","김용국","린","뚜안앵","박진영","박찬수","신우찬","앵덕","이동근","이민준","이상호","장형준"];
+const PEOPLE = NAMES.map((name, i) => ({ id: "n" + pad(i + 1), name, g: "" }));
+const BY_ID = Object.fromEntries(PEOPLE.map(p => [p.id, p]));
+let GA = [], GP = [];
+function applyGroups(map) {
+  for (const p of PEOPLE) p.g = ["A","B","C"].includes(map?.[p.id]) ? map[p.id] : "";
+  GA = PEOPLE.filter(p => p.g === "A").map(p => p.id);
+  GP = PEOPLE.filter(p => p.g === "B" || p.g === "C").map(p => p.id);
+}
+const byName = (x, y) => BY_ID[x].name.localeCompare(BY_ID[y].name, "ko");
+const WD = "일월화수목금토";
+
+// 근무조 목록: 실험 시작/종료에 맞춰 첫·마지막 조를 자른다 (현지 시각을 UTC 값으로 계산)
+const START = Date.UTC(2026,9,11,11,0), END = Date.UTC(2026,9,19,18,0);
+const KINDS = [["새벽",1.5,9],["낮",9,18],["밤",18,25.5]];
+const SHIFTS = [];
+for (let d = 10; d <= 19; d++) for (const [k,s,e] of KINDS) {
+  const base = Date.UTC(2026,9,d);
+  const st = Math.max(base + s*3600e3, START), en = Math.min(base + e*3600e3, END);
+  if (st < en) SHIFTS.push({ id: "s" + pad(SHIFTS.length+1), k, st, en, day: d, h: (en-st)/3600e3 });
+}
+const N = SHIFTS.length;
+const DAYS = [...new Set(SHIFTS.map(s => s.day))];
+const fmt = t => { const d = new Date(t); return `${d.getUTCMonth()+1}/${d.getUTCDate()}(${WD[d.getUTCDay()]}) ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`; };
+const hm = t => fmt(t).slice(-5);
+const dayLabel = d => `10/${d}(${WD[new Date(Date.UTC(2026,9,d)).getUTCDay()]})`;
+const shiftByDayKind = (d,k) => SHIFTS.find(s => s.day === d && s.k === k);
+const shiftLabel = s => `10/${s.day} ${s.k}`;
+
+
+const DEFAULT_GROUPS = { 이동근:"A", 이상호:"A", 박진영:"A", 김영상:"A", 장형준:"A", 뚜안앵:"B", 린:"B", 김소연:"B", 박찬수:"B", 김용국:"C", 신우찬:"C", 이민준:"C", 앵덕:"C" };
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const unb64 = s => { try { return decodeURIComponent(escape(atob(s))); } catch { return ""; } };
+const KEY = "roster-admin-v1";
+let avail = {};
+let state = { groups: {}, rows: SHIFTS.map(() => ({ a: "", p: "", locked: false })), minRest: 16 };
+
+function save() { try { localStorage.setItem(KEY, JSON.stringify({ ...state, avail })); } catch {} }
+function load(obj) {
+  if (!obj) return;
+  if (obj.avail) avail = obj.avail;
+  if (obj.groups) state.groups = obj.groups;
+  if (Array.isArray(obj.rows) && obj.rows.length === N) state.rows = obj.rows;
+  if (typeof obj.minRest === "number") state.minRest = obj.minRest;
+}
+try { load(JSON.parse(localStorage.getItem(KEY) || "null")); } catch {}
+if (!Object.keys(state.groups).length) for (const p of PEOPLE) state.groups[p.id] = DEFAULT_GROUPS[p.name] || "";
+applyGroups(state.groups);
+
+// ---------- 배치 엔진 ----------
+const isBlocked = (pid, i) => (avail[pid]?.blocked || []).includes(SHIFTS[i].id);
+function analyze(rows, minRest) {
+  const issues = rows.map(() => []), per = {};
+  for (const p of PEOPLE) per[p.id] = { n: 0, h: 0, 낮: 0, 밤: 0, 새벽: 0, idx: [] };
+  rows.forEach((r, i) => {
+    if (r.a && BY_ID[r.a]?.g !== "A") issues[i].push(`${BY_ID[r.a].name}은(는) A그룹 아님`);
+    if (r.p && !["B","C"].includes(BY_ID[r.p]?.g)) issues[i].push(`${BY_ID[r.p].name}은(는) B/C그룹 아님`);
+    for (const pid of [r.a, r.p]) {
+      if (!pid) { issues[i].push("빈 자리"); continue; }
+      const x = per[pid]; x.n++; x.h += SHIFTS[i].h; x[SHIFTS[i].k]++; x.idx.push(i);
+      if (isBlocked(pid, i)) issues[i].push(`${BY_ID[pid].name} 불가 시간`);
+    }
+  });
+  for (const pid in per) {
+    const idx = per[pid].idx;
+    for (let j = 1; j < idx.length; j++) {
+      const rest = (SHIFTS[idx[j]].st - SHIFTS[idx[j-1]].en) / 3600e3;
+      if (rest < minRest) issues[idx[j]].push(`${BY_ID[pid].name} 휴식 ${rest}h`);
+    }
+  }
+  return { issues, per };
+}
+function cost(a, p, minRest, blockedA, blockedP) {
+  let c = 0;
+  for (const [s, people, bl] of [[a, GA, blockedA], [p, GP, blockedP]]) {
+    const cnt = {}, hrs = {}, dawn = {}, eve = {}, last = {};
+    for (const x of people) { cnt[x] = hrs[x] = dawn[x] = eve[x] = 0; }
+    for (let i = 0; i < N; i++) {
+      const x = s[i];
+      if (bl[i].has(x)) c += 1e6;
+      if (x in last && (SHIFTS[i].st - SHIFTS[last[x]].en) / 3600e3 < minRest) c += 1e5;
+      last[x] = i;
+      cnt[x]++; hrs[x] += SHIFTS[i].h;
+      if (SHIFTS[i].k === "새벽") dawn[x]++; else if (SHIFTS[i].k === "밤") eve[x]++;
+    }
+    for (const [m, w] of [[cnt, 1000], [hrs, 10], [dawn, 200], [eve, 100]]) {
+      let sum = 0; for (const x of people) sum += m[x];
+      const mean = sum / people.length;
+      for (const x of people) c += w * (m[x] - mean) ** 2;
+    }
+  }
+  const pairs = {};
+  for (let i = 0; i < N; i++) { const k = a[i] + p[i]; pairs[k] = (pairs[k] || 0) + 1; }
+  for (const k in pairs) if (pairs[k] > 1) c += 50 * (pairs[k] - 1);
+  for (let i = 1; i < N; i++) if ((BY_ID[p[i]].g === "B") === (BY_ID[p[i-1]].g === "B")) c += 5;
+  return c;
+}
+function solve(rows, minRest) {
+  const locked = rows.map(r => !!r.locked);
+  const blockedA = SHIFTS.map(s => new Set(GA.filter(x => (avail[x]?.blocked || []).includes(s.id))));
+  const blockedP = SHIFTS.map(s => new Set(GP.filter(x => (avail[x]?.blocked || []).includes(s.id))));
+  const B = GP.filter(x => BY_ID[x].g === "B"), C = GP.filter(x => BY_ID[x].g === "C");
+  const order = [];
+  for (let i = 0; i < Math.max(B.length, C.length); i++) { if (B[i]) order.push(B[i]); if (C[i]) order.push(C[i]); }
+  const a = rows.map((r, i) => locked[i] && r.a ? r.a : GA[i % GA.length]);
+  const p = rows.map((r, i) => locked[i] && r.p ? r.p : order[i % order.length]);
+  const free = locked.map((l, i) => l ? -1 : i).filter(i => i >= 0);
+  let cur = cost(a, p, minRest, blockedA, blockedP), best = [cur, a.slice(), p.slice()];
+  let seed = 2026; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const ITER = 120000;
+  if (free.length) for (let it = 0; it < ITER; it++) {
+    const T = 500 * (1 - it / ITER) + 1e-3;
+    const useA = rnd() < 0.5, s = useA ? a : p, ppl = useA ? GA : GP;
+    const i = free[Math.floor(rnd() * free.length)];
+    let undo;
+    if (rnd() < 0.5) { const j = free[Math.floor(rnd() * free.length)]; [s[i], s[j]] = [s[j], s[i]]; undo = () => { [s[i], s[j]] = [s[j], s[i]]; }; }
+    else { const old = s[i]; s[i] = ppl[Math.floor(rnd() * ppl.length)]; undo = () => { s[i] = old; }; }
+    const nw = cost(a, p, minRest, blockedA, blockedP);
+    if (nw <= cur || rnd() < Math.exp((cur - nw) / T)) { cur = nw; if (cur < best[0]) best = [cur, a.slice(), p.slice()]; }
+    else undo();
+  }
+  return best[1].map((x, i) => ({ a: x, p: best[2][i], locked: locked[i] }));
+}
+
+
+
+function download(name, text, type) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = name; document.body.appendChild(a); a.click(); a.remove();
+}
+function importText(text) {
+  const codes = text.match(/AVAIL:n\d{2}:[\d,]*(?::[A-Za-z0-9+/=]*)?/g) || [];
+  const names = [];
+  for (const c of codes) {
+    const [, pid, list, note = ""] = c.split(":");
+    if (!BY_ID[pid]) continue;
+    const blocked = list.split(",").filter(Boolean).map(n => "s" + pad(+n)).filter(id => SHIFTS.some(s => s.id === id));
+    avail[pid] = { blocked, note: note ? unb64(note) : "", updatedAt: new Date().toISOString() };
+    names.push(BY_ID[pid].name);
+  }
+  return names;
+}
+function report(names) {
+  const st = $("import-status");
+  if (!names.length) { st.textContent = "AVAIL: 코드를 찾지 못했습니다. 참가자가 보낸 내용을 그대로 붙여 넣어 주세요."; st.className = "status err"; return; }
+  st.textContent = `${names.length}건 반영: ${[...new Set(names)].join(", ")}`; st.className = "status ok";
+  save(); render();
+}
+$("import").addEventListener("click", () => { report(importText($("import-text").value)); $("import-text").value = ""; });
+async function readFiles(files) { let names = []; for (const f of files) names = names.concat(importText(await f.text())); report(names); }
+$("file").addEventListener("change", e => readFiles(e.target.files));
+const drop = $("drop");
+drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("over"); readFiles(e.dataTransfer.files); });
+
+function render() {
+  const submitted = PEOPLE.filter(p => avail[p.id]).length;
+  const totalBlocked = PEOPLE.reduce((n, p) => n + (avail[p.id]?.blocked.length || 0), 0);
+  const { issues, per } = analyze(state.rows, state.minRest);
+  const nIssues = issues.filter(x => x.length).length;
+  $("minrest").value = state.minRest;
+  $("kpis").innerHTML = `
+    <div class="kpi"><b class="mono">${submitted} / ${PEOPLE.length}</b><span>제출 인원</span></div>
+    <div class="kpi"><b class="mono">${totalBlocked}</b><span>불가 표시된 조 (합계)</span></div>
+    <div class="kpi"><b class="mono" style="color:var(${nIssues ? "--block" : "--ok"})">${nIssues}</b><span>문제 있는 조</span></div>
+    <div class="kpi"><b class="mono">${N}</b><span>전체 근무조</span></div>`;
+  const ordered = ["A","B","C",""].flatMap(g => PEOPLE.filter(p => p.g === g));
+  let m = `<thead><tr><th class="n">이름</th>` + SHIFTS.map(s => `<th title="${fmt(s.st)}"><span class="tag k-${s.k}" style="padding:1px 4px">${s.k[0]}</span><br><span class="mono">${s.day}</span></th>`).join("") + `</tr></thead><tbody>`;
+  for (const p of ordered) {
+    const a = avail[p.id];
+    m += `<tr><td class="n" title="${esc(a?.note || "")}">${esc(p.name)} <span class="grp">${p.g}</span>${a ? (a.note ? " 💬" : "") + ` <button class="x" data-del="${p.id}" aria-label="${esc(p.name)} 제출 삭제">✕</button>` : ' <span class="grp" style="color:var(--warn)">미제출</span>'}</td>` +
+      SHIFTS.map((s, i) => {
+        const on = state.rows[i].a === p.id || state.rows[i].p === p.id, b = a?.blocked.includes(s.id);
+        return `<td>${b ? `<span class="mx b">${on ? "!" : "✕"}</span>` : on ? `<span class="mx on">●</span>` : ""}</td>`;
+      }).join("") + `</tr>`;
+  }
+  $("matrix").innerHTML = m + "</tbody>";
+  const opt = (ids, v) => `<option value="">—</option>` + ids.map(id => `<option value="${id}" ${id === v ? "selected" : ""}>${esc(BY_ID[id].name)}${BY_ID[id].g !== "A" ? " (" + BY_ID[id].g + ")" : ""}</option>`).join("");
+  let e = `<thead><tr><th>날짜</th><th>조</th><th>A그룹</th><th>B/C그룹</th><th>고정</th><th>확인</th></tr></thead><tbody>`, prev = null;
+  SHIFTS.forEach((s, i) => {
+    const r = state.rows[i];
+    e += `<tr class="${s.day !== prev && i ? "day-sep" : ""}"><td>${s.day !== prev ? dayLabel(s.day) : ""}</td><td><span class="tag k-${s.k}">${s.k}</span> <span class="mono grp">${hm(s.st)}–${hm(s.en)}</span></td>
+      <td><select id="ea-${i}" data-i="${i}" data-f="a">${opt(GA, r.a)}</select></td>
+      <td><select id="ep-${i}" data-i="${i}" data-f="p">${opt(GP, r.p)}</select></td>
+      <td><input type="checkbox" class="lock" id="el-${i}" data-i="${i}" data-f="locked" ${r.locked ? "checked" : ""} aria-label="고정"></td>
+      <td class="issue ${issues[i].length ? "" : "ok"}">${issues[i].length ? esc(issues[i].join(" · ")) : "OK"}</td></tr>`;
+    prev = s.day;
+  });
+  $("edit").innerHTML = e + "</tbody>";
+  let su = `<thead><tr><th>이름</th><th>그룹</th><th>횟수</th><th>시간</th><th>낮</th><th>밤</th><th>새벽</th><th>근무</th></tr></thead><tbody>`;
+  for (const p of ordered) {
+    const x = per[p.id];
+    su += `<tr><td>${esc(p.name)}</td><td>${p.g || "—"}</td><td class="mono">${x.n}</td><td class="mono">${x.h}</td><td class="mono">${x.낮}</td><td class="mono">${x.밤}</td><td class="mono">${x.새벽}</td><td style="white-space:normal">${x.idx.map(i => shiftLabel(SHIFTS[i])).join(", ")}</td></tr>`;
+  }
+  $("summary").innerHTML = su + "</tbody>";
+  $("groups-edit").innerHTML = PEOPLE.map(p => `<label class="row" style="gap:4px">${esc(p.name)}<select id="g-${p.id}" data-pid="${p.id}">${["","A","B","C"].map(g => `<option value="${g}" ${p.g === g ? "selected" : ""}>${g || "—"}</option>`).join("")}</select></label>`).join("");
+  const groupsOk = GA.length && GP.some(x => BY_ID[x].g === "B") && GP.some(x => BY_ID[x].g === "C");
+  $("auto").disabled = !groupsOk;
+  $("admin-status").textContent = groupsOk ? "" : "그룹 설정에 A, B, C가 모두 있어야 자동 배치할 수 있습니다.";
+}
+$("matrix").addEventListener("click", e => { const b = e.target.closest("[data-del]"); if (!b) return; delete avail[b.dataset.del]; save(); render(); });
+$("edit").addEventListener("change", e => {
+  const t = e.target; if (!t.dataset.f) return;
+  state.rows[+t.dataset.i][t.dataset.f] = t.type === "checkbox" ? t.checked : t.value;
+  save(); render();
+});
+$("groups-edit").addEventListener("change", e => {
+  const t = e.target; if (!t.dataset.pid) return;
+  state.groups[t.dataset.pid] = t.value; applyGroups(state.groups); save(); render();
+});
+$("minrest").addEventListener("change", () => { state.minRest = Math.max(0, +$("minrest").value || 0); save(); render(); });
+$("auto").addEventListener("click", () => {
+  $("admin-status").textContent = "배치 계산 중…";
+  setTimeout(() => { state.rows = solve(state.rows, state.minRest); save(); render(); $("admin-status").textContent = "배치 완료"; $("admin-status").className = "status ok"; }, 20);
+});
+
+function shareText() {
+  let t = "[연속실험 근무표] 10/11(일) 11:00 ~ 10/19(월) 18:00\n", prev = null;
+  SHIFTS.forEach((s, i) => {
+    if (s.day !== prev) t += `\n■ ${dayLabel(s.day)}\n`;
+    const m = [state.rows[i].a, state.rows[i].p].filter(Boolean).sort(byName).map(id => BY_ID[id].name);
+    t += `${s.k} ${hm(s.st)}-${hm(s.en)} : ${m.join(", ") || "미정"}\n`;
+    prev = s.day;
+  });
+  return t;
+}
+$("copy-share").addEventListener("click", async () => {
+  const t = shareText(); $("share").hidden = false; $("share").textContent = t;
+  try { await navigator.clipboard.writeText(t); $("export-status").textContent = "복사됨"; $("export-status").className = "status ok"; }
+  catch { $("export-status").textContent = "아래 글을 선택해서 복사하세요"; }
+});
+$("csv").addEventListener("click", () => {
+  const rows = [["날짜","조","시작","종료","시간","근무자1","근무자2"]];
+  SHIFTS.forEach((s, i) => {
+    const m = [state.rows[i].a, state.rows[i].p].filter(Boolean).sort(byName).map(id => BY_ID[id].name);
+    rows.push([dayLabel(s.day), s.k, hm(s.st), hm(s.en), s.h, m[0] || "", m[1] || ""]);
+  });
+  download("연속실험_근무표.csv", "﻿" + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\r\n"), "text/csv;charset=utf-8");
+});
+$("backup").addEventListener("click", () => download(`근무표_백업_${new Date().toISOString().slice(0,10)}.json`, JSON.stringify({ ...state, avail }, null, 1), "application/json"));
+$("restore").addEventListener("change", async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try { load(JSON.parse(await f.text())); applyGroups(state.groups); save(); render(); $("export-status").textContent = "백업을 불러왔습니다"; $("export-status").className = "status ok"; }
+  catch { $("export-status").textContent = "백업 파일을 읽지 못했습니다"; $("export-status").className = "status err"; }
+});
+render();
+</script>
+</body>
+</html>

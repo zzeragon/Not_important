@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>연속실험 불가 시간 조사</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: 상단 고정 탭 + 한 열짜리 작업면. 근무조(낮/밤/새벽)는 색으로, 상태(불가/충돌/고정)는 형태로 구분 */
+:root {
+  --bg: #f3f5f4;
+  --surface: #ffffff;
+  --fg: #17201d;
+  --muted: #5c6a65;
+  --line: #d6ddda;
+  --accent: #0e6b5c;
+  --accent-fg: #ffffff;
+  --day: #f2c14e;
+  --day-soft: #fbf0d2;
+  --eve: #5b5fc7;
+  --eve-soft: #e3e4f7;
+  --dawn: #3d8eb9;
+  --dawn-soft: #dcecf5;
+  --block: #c2413a;
+  --block-soft: #f7dedc;
+  --warn: #b26a00;
+  --ok: #2a7d4f;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111816; --surface: #19221f; --fg: #e4ebe8; --muted: #93a39d; --line: #2c3833;
+  --accent: #3fb59f; --accent-fg: #0b1513;
+  --day: #e0b043; --day-soft: #3a3220; --eve: #8d91ee; --eve-soft: #2a2b47; --dawn: #6cb3da; --dawn-soft: #1d3340;
+  --block: #ec6d64; --block-soft: #44221f; --warn: #e2a243; --ok: #5cc68b; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111816; --surface: #19221f; --fg: #e4ebe8; --muted: #93a39d; --line: #2c3833;
+  --accent: #3fb59f; --accent-fg: #0b1513;
+  --day: #e0b043; --day-soft: #3a3220; --eve: #8d91ee; --eve-soft: #2a2b47; --dawn: #6cb3da; --dawn-soft: #1d3340;
+  --block: #ec6d64; --block-soft: #44221f; --warn: #e2a243; --ok: #5cc68b; color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 15px; line-height: 1.55; padding: 0 16px 48px }
+.wrap { max-width: 980px; margin: 0 auto }
+header { padding-block: 22px 8px }
+h1 { font-size: 1.45rem; margin: 0; text-wrap: balance; letter-spacing: -0.01em }
+h2 { font-size: 1.1rem; margin: 0 0 4px }
+h3 { font-size: .95rem; margin: 0 0 6px }
+.sub { color: var(--muted); margin: 2px 0 0; font-size: .9rem }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums }
+nav { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 18px; padding-top: 6px; overflow-x: auto }
+nav button { border: 0; background: none; color: var(--muted); font: inherit; font-weight: 500; padding: 10px 14px; border-bottom: 3px solid transparent; cursor: pointer; white-space: nowrap }
+nav button[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent) }
+section.panel { display: grid; gap: 18px }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: .85rem; color: var(--muted) }
+.sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px }
+.btn { font: inherit; font-weight: 500; border-radius: 8px; padding: 9px 16px; cursor: pointer; border: 1px solid var(--line); background: var(--surface); color: var(--fg) }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent) }
+.btn:disabled { opacity: .5; cursor: default }
+.btn:focus-visible, nav button:focus-visible, .cell:focus-visible, .chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center }
+.status { font-size: .88rem; color: var(--muted) }
+.status.ok { color: var(--ok) } .status.err { color: var(--block) }
+
+/* 이름 선택 */
+.chips { display: flex; flex-wrap: wrap; gap: 8px }
+.chip { font: inherit; border: 1px solid var(--line); background: var(--surface); color: var(--fg); padding: 7px 14px; border-radius: 999px; cursor: pointer }
+.chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent) }
+.chip .done { font-size: .72rem; margin-left: 6px; color: var(--ok) }
+.chip[aria-pressed="true"] .done { color: inherit }
+
+/* 불가 시간 그리드 */
+.grid { display: grid; grid-template-columns: minmax(84px, 110px) repeat(3, minmax(0, 1fr)) auto; gap: 6px; align-items: stretch }
+.grid .hd { font-size: .8rem; color: var(--muted); padding: 2px 4px }
+.grid .hd b { display: block; color: var(--fg); font-size: .88rem }
+.dlabel { display: flex; align-items: center; font-weight: 500; font-size: .92rem }
+.cell { font: inherit; border-radius: 8px; border: 1px solid var(--line); padding: 10px 6px; cursor: pointer; text-align: center; min-height: 46px; background: var(--surface); color: var(--fg); font-size: .85rem }
+.cell.k-낮 { box-shadow: inset 0 3px 0 var(--day) }
+.cell.k-밤 { box-shadow: inset 0 3px 0 var(--eve) }
+.cell.k-새벽 { box-shadow: inset 0 3px 0 var(--dawn) }
+.cell[aria-pressed="true"] { background: repeating-linear-gradient(135deg, var(--block-soft) 0 6px, var(--surface) 6px 12px); border-color: var(--block); color: var(--block); font-weight: 700 }
+.cell.na { visibility: hidden }
+.allday { font: inherit; font-size: .78rem; border: 0; background: none; color: var(--muted); cursor: pointer; text-decoration: underline; padding: 0 4px }
+textarea, input[type="number"], select { font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px }
+textarea { width: 100%; min-height: 70px; resize: vertical }
+.code { font-family: var(--font-mono); font-size: .8rem; background: var(--bg); border: 1px dashed var(--line); border-radius: 8px; padding: 10px; word-break: break-all; user-select: all }
+
+/* 근무표 */
+.tbl-wrap { overflow-x: auto }
+table { border-collapse: collapse; width: 100%; font-size: .9rem }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap }
+th { font-size: .78rem; color: var(--muted); font-weight: 500 }
+tr.day-sep td { border-top: 2px solid var(--line) }
+.tag { display: inline-block; font-size: .78rem; font-weight: 700; padding: 2px 8px; border-radius: 999px }
+.tag.k-낮 { background: var(--day-soft); color: var(--fg) } .tag.k-밤 { background: var(--eve-soft); color: var(--fg) } .tag.k-새벽 { background: var(--dawn-soft); color: var(--fg) }
+.grp { font-size: .72rem; color: var(--muted); margin-left: 4px }
+tr.mine td { background: color-mix(in srgb, var(--accent) 12%, transparent) }
+.empty { color: var(--muted); padding: 24px 8px; text-align: center }
+
+/* 관리 */
+.matrix td, .matrix th { padding: 4px; text-align: center; font-size: .78rem }
+.matrix td.n, .matrix th.n { text-align: left; padding-right: 10px }
+.mx { display: inline-block; width: 18px; height: 18px; border-radius: 4px; line-height: 18px; font-weight: 700 }
+.mx.b { background: var(--block-soft); color: var(--block) }
+.mx.on { background: var(--accent); color: var(--accent-fg) }
+.issue { color: var(--block); font-size: .8rem; white-space: normal; min-width: 160px }
+.issue.ok { color: var(--ok) }
+.edit select { padding: 5px 6px; max-width: 120px }
+.lock { cursor: pointer }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px }
+.kpi { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px }
+.kpi b { display: block; font-size: 1.3rem }
+.kpi span { font-size: .8rem; color: var(--muted) }
+.notice { border-left: 3px solid var(--warn); padding: 8px 12px; background: var(--surface); font-size: .88rem }
+@media (max-width: 560px) {
+  .grid { grid-template-columns: 64px repeat(3, minmax(0, 1fr)); }
+  .grid .allday-col { display: none }
+  .cell { padding: 8px 2px; font-size: .78rem }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>연속실험 불가 시간 조사</h1>
+    <p class="sub"><span class="mono">10/11(일) 11:00 → 10/19(월) 18:00</span> · 2인 1조 · 낮 09:00–18:00 / 밤 18:00–01:30 / 새벽 01:30–09:00</p>
+  </header>
+  <section class="panel" style="margin-top:16px">
+    <div class="card">
+      <h2>1. 이름을 선택하세요</h2>
+      <div class="chips" id="names" style="margin-top:12px"></div>
+    </div>
+    <div class="card" id="survey-form" hidden>
+      <h2>2. <span id="who"></span> 님이 <u>근무할 수 없는</u> 시간대를 누르세요</h2>
+      <p class="sub">빗금이 쳐진 칸이 불가입니다. 아무것도 누르지 않으면 모든 시간 가능으로 제출됩니다.</p>
+      <div class="legend" style="margin:10px 0 14px">
+        <span><i class="sw" style="background:var(--dawn)"></i>새벽 01:30–09:00</span>
+        <span><i class="sw" style="background:var(--day)"></i>낮 09:00–18:00</span>
+        <span><i class="sw" style="background:var(--eve)"></i>밤 18:00–익일 01:30</span>
+      </div>
+      <div class="grid" id="grid"></div>
+      <div style="margin-top:14px">
+        <label for="note"><h3>메모 (선택)</h3></label>
+        <textarea id="note" placeholder="예) 10/15 낮은 14시 이후면 가능"></textarea>
+      </div>
+    </div>
+    <div class="card" id="out-card" hidden>
+      <h2>3. 결과를 관리자에게 보내세요</h2>
+      <p class="sub">아래 내용을 복사해서 카톡·메일로 보내거나, 파일로 저장해서 첨부하세요. 둘 중 하나만 하면 됩니다.</p>
+      <div class="code" id="out" style="margin-top:10px;white-space:pre-wrap"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn primary" id="copy">복사하기</button>
+        <button class="btn" id="download">파일로 저장</button>
+        <span class="status" id="out-status"></span>
+      </div>
+    </div>
+  </section>
+</div>
+<script>
+const pad = n => String(n).padStart(2,"0");
+const NAMES = ["김소연","김영상","김용국","린","뚜안앵","박진영","박찬수","신우찬","앵덕","이동근","이민준","이상호","장형준"];
+const PEOPLE = NAMES.map((name, i) => ({ id: "n" + pad(i + 1), name, g: "" }));
+const BY_ID = Object.fromEntries(PEOPLE.map(p => [p.id, p]));
+let GA = [], GP = [];
+function applyGroups(map) {
+  for (const p of PEOPLE) p.g = ["A","B","C"].includes(map?.[p.id]) ? map[p.id] : "";
+  GA = PEOPLE.filter(p => p.g === "A").map(p => p.id);
+  GP = PEOPLE.filter(p => p.g === "B" || p.g === "C").map(p => p.id);
+}
+const byName = (x, y) => BY_ID[x].name.localeCompare(BY_ID[y].name, "ko");
+const WD = "일월화수목금토";
+
+// 근무조 목록: 실험 시작/종료에 맞춰 첫·마지막 조를 자른다 (현지 시각을 UTC 값으로 계산)
+const START = Date.UTC(2026,9,11,11,0), END = Date.UTC(2026,9,19,18,0);
+const KINDS = [["새벽",1.5,9],["낮",9,18],["밤",18,25.5]];
+const SHIFTS = [];
+for (let d = 10; d <= 19; d++) for (const [k,s,e] of KINDS) {
+  const base = Date.UTC(2026,9,d);
+  const st = Math.max(base + s*3600e3, START), en = Math.min(base + e*3600e3, END);
+  if (st < en) SHIFTS.push({ id: "s" + pad(SHIFTS.length+1), k, st, en, day: d, h: (en-st)/3600e3 });
+}
+const N = SHIFTS.length;
+const DAYS = [...new Set(SHIFTS.map(s => s.day))];
+const fmt = t => { const d = new Date(t); return `${d.getUTCMonth()+1}/${d.getUTCDate()}(${WD[d.getUTCDay()]}) ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`; };
+const hm = t => fmt(t).slice(-5);
+const dayLabel = d => `10/${d}(${WD[new Date(Date.UTC(2026,9,d)).getUTCDay()]})`;
+const shiftByDayKind = (d,k) => SHIFTS.find(s => s.day === d && s.k === k);
+const shiftLabel = s => `10/${s.day} ${s.k}`;
+
+
+let me = null, picked = new Set();
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const b64 = s => btoa(unescape(encodeURIComponent(s)));
+
+function renderNames() {
+  $("names").innerHTML = PEOPLE.map(p => `<button class="chip" data-pid="${p.id}" aria-pressed="${me === p.id}">${esc(p.name)}</button>`).join("");
+}
+function renderGrid() {
+  let h = `<div class="hd"></div>` + KINDS.map(([k]) => `<div class="hd"><b>${k}</b><span class="mono">${k==="새벽"?"01:30–09:00":k==="낮"?"09:00–18:00":"18:00–01:30"}</span></div>`).join("") + `<div class="hd allday-col"></div>`;
+  for (const d of DAYS) {
+    h += `<div class="dlabel">${dayLabel(d)}</div>`;
+    for (const [k] of KINDS) {
+      const s = shiftByDayKind(d,k);
+      if (!s) { h += `<div class="cell na"></div>`; continue; }
+      const on = picked.has(s.id), range = `${hm(s.st)}–${hm(s.en)}`;
+      h += `<button class="cell k-${k}" data-sid="${s.id}" aria-pressed="${on}" aria-label="${dayLabel(d)} ${k} ${range}">${on ? "불가" : (s.h < 7.5 ? range : "가능")}</button>`;
+    }
+    h += `<div class="allday-col dlabel"><button class="allday" data-day="${d}">하루 전체</button></div>`;
+  }
+  $("grid").innerHTML = h;
+}
+function resultText() {
+  const blocked = [...picked].sort();
+  const note = $("note").value.trim().slice(0, 500);
+  const human = blocked.length ? blocked.map(id => shiftLabel(SHIFTS.find(s => s.id === id))).join(", ") : "불가 시간 없음";
+  return `[연속실험 불가 시간] ${BY_ID[me].name}\n불가: ${human}${note ? "\n메모: " + note : ""}\nAVAIL:${me}:${blocked.map(s => +s.slice(1)).join(",")}:${note ? b64(note) : ""}`;
+}
+function renderOut() { $("out").textContent = resultText(); $("out-status").textContent = ""; }
+
+$("names").addEventListener("click", e => {
+  const b = e.target.closest("[data-pid]"); if (!b) return;
+  me = b.dataset.pid; picked = new Set(); $("note").value = "";
+  $("who").textContent = BY_ID[me].name;
+  $("survey-form").hidden = false; $("out-card").hidden = false;
+  renderNames(); renderGrid(); renderOut();
+});
+$("grid").addEventListener("click", e => {
+  const c = e.target.closest("[data-sid]"), a = e.target.closest("[data-day]");
+  if (c) { picked.has(c.dataset.sid) ? picked.delete(c.dataset.sid) : picked.add(c.dataset.sid); }
+  else if (a) {
+    const ids = SHIFTS.filter(s => s.day === +a.dataset.day).map(s => s.id);
+    const all = ids.every(i => picked.has(i));
+    ids.forEach(i => all ? picked.delete(i) : picked.add(i));
+  } else return;
+  renderGrid(); renderOut();
+});
+$("note").addEventListener("input", renderOut);
+$("copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(resultText()); $("out-status").textContent = "복사됨 · 관리자에게 붙여넣어 보내세요"; $("out-status").className = "status ok"; }
+  catch { const r = document.createRange(); r.selectNodeContents($("out")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); $("out-status").textContent = "선택됨 · 길게 눌러 복사하세요"; }
+});
+$("download").addEventListener("click", () => {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([resultText()], { type: "text/plain;charset=utf-8" }));
+  a.download = `불가시간_${BY_ID[me].name}.txt`;
+  document.body.appendChild(a); a.click(); a.remove();
+  $("out-status").textContent = "저장됨 · 이 파일을 관리자에게 보내세요"; $("out-status").className = "status ok";
+});
+renderNames();
+</script>
+</body>
+</html>
